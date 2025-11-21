@@ -1,5 +1,6 @@
 import numpy as np
 from numba import jit
+import pickle
 
 """
 
@@ -66,6 +67,27 @@ class LogisticRegression:
         
         # Untuk tracking training history (bonus video)
         self.training_history = []
+
+    # fitur save dan load dengan pickle
+    def save_model(self, filename):
+        # seluruh objek disimpan
+        try:
+            with open(filename, 'wb') as file: 
+                pickle.dump(self, file)
+            print(f"Model berhasil disimpan ke: {filename}")
+        except Exception as e:
+            print(f"Gagal menyimpan model: {e}")
+
+    @staticmethod
+    def load_model(filename):
+        try:
+            with open(filename, 'rb') as file:  
+                loaded_model = pickle.load(file)
+            print(f"Model berhasil dimuat dari: {filename}")
+            return loaded_model
+        except Exception as e:
+            print(f"Gagal memuat model: {e}")
+            return None
 
     def sigmoid(self, z):
         z = np.clip(z, -500, 500)
