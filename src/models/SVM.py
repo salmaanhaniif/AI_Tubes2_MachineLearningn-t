@@ -1,3 +1,4 @@
+import pickle
 import numpy as np
 
 class BinarySVM:
@@ -253,3 +254,66 @@ class BinarySVM:
 
         scores = self.predict_score(X)
         return np.sign(scores)
+    
+class MulticlassSVM:
+    # implementasi One v All (OvA) menggunakan BinarySVM
+    def __init__(self, C=1.0, kernel='linear', kernel_param=1.0, tol=1e-3, max_iter=100):
+        self.C = C
+        self.kernel = kernel
+        self.kernel_param = kernel_param
+        self.tol = tol
+        self.max_iter = max_iter
+        self.models = []
+        self.classes = None
+
+    def fit(self, X, y):
+        X = np.array(X)
+        y = np.array(y)
+        
+        self.classes = np.unique(y)
+        self.models = [] 
+        
+        # debug
+        # print(f"Training Multiclass SVM (One against All) for {len(self.classes)} classes")
+        # print(f"Mode: SMO Optimization | Kernel: {self.kernel}")
+
+        for class_label in self.classes:
+            # debug
+            # print(f" -> Training model for '{class_label}' class")
+            
+            y_binary = np.where(y == class_label, 1, -1) # Target=1, Rest=-1
+            model = BinarySVM(
+                C=self.C, 
+                kernel=self.kernel,
+                kernel_param=self.kernel_param,
+                tol=self.tol,
+                max_iter=self.max_iter
+            )
+            
+            model.fit(X, y_binary)
+            self.models.append(model)
+        # print("All models trained successfully.")
+
+    def predict(self, X):
+        X = np.array(X)
+        n_samples = X.shape[0]
+        n_classes = len(self.classes)
+        scores = np.zeros((n_samples, n_classes))
+        
+        for i, model in enumerate(self.models):
+            scores[:, i] = model.predict_score(X)
+        
+        predicted_indices = np.argmax(scores, axis=1)
+        return self.classes[predicted_indices]
+
+    def save_model(self, filename):
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
+        print(f"Model berhasil disimpan ke {filename}")
+
+    @staticmethod
+    def load_model(filename):
+        with open(filename, 'rb') as f:
+            model = pickle.load(f)
+        print(f"Model berhasil dimuat dari {filename}")
+        return model
