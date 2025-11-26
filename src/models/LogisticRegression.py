@@ -111,7 +111,7 @@ class LogisticRegression:
         loss = -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
         return loss
     
-    def fit(self, x, y, track_history=False):
+    def fit(self, x, y, track_history=True):
         """
         Train model
         
@@ -294,13 +294,13 @@ class LogisticRegression:
             return self.classes_[class_indices]
             
     
-    def generate_training_gif(self, X, y, subsample_rate = 10, output_path='training_animation.gif', 
+    def generate_training_gif(self, X, y, subsample_rate=10, output_path='training_animation.gif', 
                              fps=10, sample_points=50):
         """
         Generate GIF that shows loss contour and parameter trajectory selama training
+        Support untuk binary dan multiclass classification
         
         PARAMETERS:
-        
         X : training data 
         y : training labels
         subsample_rate (int): per frame mewakili x amount of sample
@@ -313,18 +313,10 @@ class LogisticRegression:
         
         CONTOH CARA PAKE DI NOTEBOOK:
         
-        output_file = 'out.gif'
-
-        used_model.generate_training_gif(
-            X=X_train_scaled, 
-            y=y_train, 
-            subsample_rate=20,
-            output_path=output_file, 
-            fps=5              
-        )
-
+        model.generate_training_gif(X=X_train, y=y_train, output_path='multi.gif', fps=5)
+        
         from IPython.display import Image, display
-        display(Image(filename=output_file))
+        display(Image(filename='binary.gif'))
         """
         try:
             import matplotlib.pyplot as plt
@@ -333,85 +325,198 @@ class LogisticRegression:
             print("Error: matplotlib required for GIF generation, try pip install matplotlib pillow")
             return
         
-        if not self.training_history:
-            print("Error: No training history found. Train with track_history=True first")
+        # BINARY CLASSIFICATION
+        if not self.is_multiclass:
+            if not self.training_history:
+                print("Error: No training history found. Train with track_history=True first")
+                return
+            
+            feature_idx = (0, 1)
+            X_subset = X[:, 0].reshape(-1, 1)
+            subsampled_history = self.training_history[::subsample_rate]
+            
+            epochs = [h['epoch'] for h in subsampled_history]
+            losses = [h['loss'] for h in subsampled_history]
+            
+            # Extract theta 0 & 1 sesuai spek
+            theta0_vals = [h['weights'][0] for h in subsampled_history]
+            theta1_vals = [h['weights'][1] for h in subsampled_history]
+            
+            # Create loss landscape grid
+            theta0_range = np.linspace(min(theta0_vals) - 1, max(theta0_vals) + 1, sample_points)
+            theta1_range = np.linspace(min(theta1_vals) - 1, max(theta1_vals) + 1, sample_points)
+            theta0_grid, theta1_grid = np.meshgrid(theta0_range, theta1_range)
+            
+            # Compute loss untuk setiap grid point feature 0 & 1
+            loss_grid = np.zeros_like(theta0_grid)
+            X_biased = np.hstack((np.ones((X_subset.shape[0], 1)), X_subset))
+            
+            # Convert y to binary if needed
+            y_binary = np.where(y == self.classes_[0], 0, 1)
+            
+            print("Computing loss landscape...")
+            for i in range(sample_points):
+                for j in range(sample_points):
+                    temp_weights = np.zeros(X_biased.shape[1])
+                    temp_weights[0] = theta0_grid[i, j]
+                    temp_weights[1] = theta1_grid[i, j]
+                    
+                    z = X_biased @ temp_weights
+                    p = self.sigmoid(z)
+                    epsilon = 1e-15
+                    p = np.clip(p, epsilon, 1 - epsilon)
+                    loss_grid[i, j] = -np.mean(y_binary * np.log(p) + (1 - y_binary) * np.log(1 - p))
+            
+            # Create animation
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+            
+            def animate(frame):
+                ax1.clear()
+                ax2.clear()
+                
+                # Plot 1: Loss contour dengan trajectory
+                contour = ax1.contour(theta0_grid, theta1_grid, loss_grid, levels=20, cmap='viridis', alpha=0.6)
+                ax1.clabel(contour, inline=True, fontsize=8)
+                
+                # Plot trajectory sampai frame saat ini
+                ax1.plot(theta0_vals[:frame+1], theta1_vals[:frame+1], 
+                        'r-', linewidth=2, label='Parameter trajectory')
+                ax1.plot(theta0_vals[frame], theta1_vals[frame], 
+                        'ro', markersize=10, label=f'Epoch {epochs[frame]}')
+                
+                ax1.set_xlabel('θ₀ (bias)')
+                ax1.set_ylabel(f'θ₁ (weight feature {feature_idx[0]})')
+                ax1.set_title(f'Loss Contour & Parameter Trajectory\nEpoch: {epochs[frame]}, Loss: {losses[frame]:.4f}')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+                
+                # Plot 2: Loss over time
+                ax2.plot(epochs[:frame+1], losses[:frame+1], 'b-', linewidth=2)
+                ax2.plot(epochs[frame], losses[frame], 'ro', markersize=10)
+                ax2.set_xlabel('Epoch')
+                ax2.set_ylabel('Loss')
+                ax2.set_title('Training Loss Over Time')
+                ax2.grid(True, alpha=0.3)
+                ax2.set_xlim(0, max(epochs))
+                ax2.set_ylim(0, max(losses) * 1.1)
+            
+            print(f"Generating binary classification GIF with {len(subsampled_history)} frames...")
+            anim = FuncAnimation(fig, animate, frames=len(subsampled_history), 
+                               interval=1000//fps, repeat=True)
+            
+            writer = PillowWriter(fps=fps)
+            anim.save(output_path, writer=writer)
+            plt.close()
+            
+            print(f"GIF saved to {output_path}")
+            print(f"Duration: {len(subsampled_history)/fps:.1f} seconds")
             return
         
-        feature_idx = (0, 1)
+        # MULTICLASS CLASSIFICATION
+        
+        # Collect histories dari semua classifiers
+        all_histories = {}
+        for class_label in self.classes_:
+            clf = self.binary_classifiers[class_label]
+            if not clf.training_history:
+                print(f"Error: No training history for class {class_label}. Train with track_history=True")
+                return
+            all_histories[class_label] = clf.training_history[::subsample_rate]
+        
+        # Get max epochs
+        max_frames = max(len(h) for h in all_histories.values())
+        
+        # Setup colors untuk setiap class
+        colors = plt.cm.tab10(np.linspace(0, 1, len(self.classes_)))
         
         X_subset = X[:, 0].reshape(-1, 1)
-        subsampled_history = self.training_history[::subsample_rate]
-        
-        epochs = [h['epoch'] for h in subsampled_history]
-        losses = [h['loss'] for h in subsampled_history]
-        
-        # Extract theta 0 & 1 sesuai spek
-        theta0_vals = [h['weights'][0] for h in subsampled_history]
-        theta1_vals = [h['weights'][1] for h in subsampled_history]
-        
-        # Create loss landscape grid
-        theta0_range = np.linspace(min(theta0_vals) - 1, max(theta0_vals) + 1, sample_points)
-        theta1_range = np.linspace(min(theta1_vals) - 1, max(theta1_vals) + 1, sample_points)
-        theta0_grid, theta1_grid = np.meshgrid(theta0_range, theta1_range)
-        
-        # Compute loss untuk setiap grid point feature 0 & 1
-        loss_grid = np.zeros_like(theta0_grid)
         X_biased = np.hstack((np.ones((X_subset.shape[0], 1)), X_subset))
         
-        print("Computing loss landscape...")
-        for i in range(sample_points):
-            for j in range(sample_points):
-                temp_weights = np.zeros(X_biased.shape[1])
-                temp_weights[0] = theta0_grid[i, j]
-                temp_weights[1] = theta1_grid[i, j]
-                
-                z = X_biased @ temp_weights
-                p = self.sigmoid(z)
-                epsilon = 1e-15
-                p = np.clip(p, epsilon, 1 - epsilon)
-                loss_grid[i, j] = -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))
+        # Collect all theta values untuk range
+        all_theta0 = []
+        all_theta1 = []
+        for history in all_histories.values():
+            all_theta0.extend([h['weights'][0] for h in history])
+            all_theta1.extend([h['weights'][1] for h in history])
         
-        # Create animation
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        # Create grid
+        theta0_range = np.linspace(min(all_theta0) - 1, max(all_theta0) + 1, sample_points)
+        theta1_range = np.linspace(min(all_theta1) - 1, max(all_theta1) + 1, sample_points)
+        theta0_grid, theta1_grid = np.meshgrid(theta0_range, theta1_range)
+        
+        # Create figure dengan subplots untuk setiap class
+        n_classes = len(self.classes_)
+        fig = plt.figure(figsize=(16, 4 * n_classes))
         
         def animate(frame):
-            ax1.clear()
-            ax2.clear()
+            fig.clear()
             
-            # Plot 1: Loss contour dengan trajectory
-            contour = ax1.contour(theta0_grid, theta1_grid, loss_grid, levels=20, cmap='viridis', alpha=0.6)
-            ax1.clabel(contour, inline=True, fontsize=8)
+            for idx, class_label in enumerate(self.classes_):
+                clf = self.binary_classifiers[class_label]
+                history = all_histories[class_label]
+                
+                if frame >= len(history):
+                    continue
+                
+                # Binary labels untuk class ini
+                y_binary = (y == class_label).astype(int)
+                
+                # Compute loss grid untuk class ini
+                loss_grid = np.zeros_like(theta0_grid)
+                for i in range(sample_points):
+                    for j in range(sample_points):
+                        temp_weights = np.zeros(X_biased.shape[1])
+                        temp_weights[0] = theta0_grid[i, j]
+                        temp_weights[1] = theta1_grid[i, j]
+                        
+                        z = X_biased @ temp_weights
+                        p = clf.sigmoid(z)
+                        epsilon = 1e-15
+                        p = np.clip(p, epsilon, 1 - epsilon)
+                        loss_grid[i, j] = -np.mean(y_binary * np.log(p) + (1 - y_binary) * np.log(1 - p))
+                
+                # Plot contour
+                ax1 = plt.subplot(n_classes, 2, idx * 2 + 1)
+                contour = ax1.contour(theta0_grid, theta1_grid, loss_grid, levels=20, cmap='viridis', alpha=0.6)
+                ax1.clabel(contour, inline=True, fontsize=8)
+                
+                # Plot trajectory
+                theta0_vals = [h['weights'][0] for h in history[:frame+1]]
+                theta1_vals = [h['weights'][1] for h in history[:frame+1]]
+                
+                ax1.plot(theta0_vals, theta1_vals, '-', color=colors[idx], linewidth=2, 
+                        label=f'Class {class_label} trajectory')
+                ax1.plot(theta0_vals[-1], theta1_vals[-1], 'o', color=colors[idx], markersize=10)
+                
+                ax1.set_xlabel('θ₀ (bias)')
+                ax1.set_ylabel('θ₁ (weight feature 0)')
+                ax1.set_title(f'Class {class_label} - Epoch: {history[frame]["epoch"]}, Loss: {history[frame]["loss"]:.4f}')
+                ax1.legend()
+                ax1.grid(True, alpha=0.3)
+                
+                # Plot loss over time
+                ax2 = plt.subplot(n_classes, 2, idx * 2 + 2)
+                epochs = [h['epoch'] for h in history[:frame+1]]
+                losses = [h['loss'] for h in history[:frame+1]]
+                
+                ax2.plot(epochs, losses, '-', color=colors[idx], linewidth=2)
+                ax2.plot(epochs[-1], losses[-1], 'o', color=colors[idx], markersize=10)
+                ax2.set_xlabel('Epoch')
+                ax2.set_ylabel('Loss')
+                ax2.set_title(f'Class {class_label} - Training Loss')
+                ax2.grid(True, alpha=0.3)
+                ax2.set_xlim(0, max([h['epoch'] for h in history]))
+                max_loss = max([h['loss'] for h in history])
+                ax2.set_ylim(0, max_loss * 1.1)
             
-            # Plot trajectory sampai frame saat ini
-            ax1.plot(theta0_vals[:frame+1], theta1_vals[:frame+1], 
-                    'r-', linewidth=2, label='Parameter trajectory')
-            ax1.plot(theta0_vals[frame], theta1_vals[frame], 
-                    'ro', markersize=10, label=f'Epoch {epochs[frame]}')
-            
-            ax1.set_xlabel('θ₀ (bias)')
-            ax1.set_ylabel(f'θ₁ (weight feature {feature_idx[0]})')
-            ax1.set_title(f'Loss Contour & Parameter Trajectory\nEpoch: {epochs[frame]}, Loss: {losses[frame]:.4f}')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
-            
-            # Plot 2: Loss over time
-            ax2.plot(epochs[:frame+1], losses[:frame+1], 'b-', linewidth=2)
-            ax2.plot(epochs[frame], losses[frame], 'ro', markersize=10)
-            ax2.set_xlabel('Epoch')
-            ax2.set_ylabel('Loss')
-            ax2.set_title('Training Loss Over Time')
-            ax2.grid(True, alpha=0.3)
-            ax2.set_xlim(0, max(epochs))
-            ax2.set_ylim(0, max(losses) * 1.1)
+            plt.tight_layout()
         
-        print(f"Generating GIF with {len(self.training_history)} frames...")
-        anim = FuncAnimation(fig, animate, frames=len(subsampled_history), 
-                           interval=1000//fps, repeat=True)
+        print(f"Generating multiclass GIF with {max_frames} frames...")
+        anim = FuncAnimation(fig, animate, frames=max_frames, interval=1000//fps, repeat=True)
         
-        # Save GIF
         writer = PillowWriter(fps=fps)
         anim.save(output_path, writer=writer)
         plt.close()
         
         print(f"GIF saved to {output_path}")
-        print(f"Duration: {len(self.training_history)/fps:.1f} seconds")
+        print(f"Duration: {max_frames/fps:.1f} seconds")
