@@ -65,6 +65,10 @@ class LogisticRegression:
         self.mini_batch = mini_batch
         self.batch_size = batch_size
         
+        self.classes_ = None
+        self.is_multiclass = False
+        self.binary_classifiers = {} 
+        
         # Untuk tracking training history (bonus video)
         self.training_history = []
 
@@ -113,6 +117,45 @@ class LogisticRegression:
         
         track_history (bool): True jika mau generate video (akan simpan weights tiap epoch)
         """
+        # Deteksi jumlah kelas
+        self.classes_ = np.unique(y)
+        n_classes = len(self.classes_)
+        
+        # Cek apakah multiclass
+        if n_classes > 2:
+            self.is_multiclass = True
+            self._fit_ovr(x, y, track_history)
+        else:
+            self.is_multiclass = False
+            y_binary = np.where(y == self.classes_[0], 0, 1)
+            self._fit_binary(x, y_binary, track_history)
+    
+    
+    def _fit_ovr(self, x, y, track_history=False):
+        """
+        Train multiclass model dengan One-vs-Rest strategy
+        """
+        for class_label in self.classes_:
+            # Buat binary labels: 1 untuk class ini, 0 untuk lainnya
+            y_binary = (y == class_label).astype(int)
+            
+            # Buat binary classifier baru
+            binary_clf = LogisticRegression(
+                learning_rate=self.learning_rate,
+                n_iterations=self.n_iteration,
+                threshold=self.threshold,
+                mini_batch=self.mini_batch,
+                batch_size=self.batch_size
+            )
+            
+            # Train binary classifier
+            binary_clf._fit_binary(x, y_binary, track_history)
+            
+            # Simpan classifier
+            self.binary_classifiers[class_label] = binary_clf
+    
+    def _fit_binary(self, x, y, track_history=False):
+        """Train single binary classifier"""
         if self.mini_batch:
             self._fit_mbgd(x, y, track_history)
         else:
@@ -217,17 +260,39 @@ class LogisticRegression:
 
     def predict_probability(self, x):
         """untuk prediksi data test"""
-        n_samples = x.shape[0]
-        x_biased = np.hstack((np.ones((n_samples, 1)), x))
+        if not self.is_multiclass:
+            n_samples = x.shape[0]
+            x_biased = np.hstack((np.ones((n_samples, 1)), x))
 
-        linear_model = x_biased @ self.weights 
-        probabilities = self.sigmoid(linear_model)
-        return probabilities
+            linear_model = x_biased @ self.weights 
+            probabilities = self.sigmoid(linear_model)
+            return probabilities
+        
+        else:
+            n_samples = x.shape[0]
+            n_classes = len(self.classes_)
+            probs = np.zeros((n_samples, n_classes))
+            
+            for idx, class_label in enumerate(self.classes_):
+                clf = self.binary_classifiers[class_label]
+                n_samples_clf = x.shape[0]
+                x_biased = np.hstack((np.ones((n_samples_clf, 1)), x))
+                linear_model = x_biased @ clf.weights
+                probs[:, idx] = clf.sigmoid(linear_model)
+            
+            return probs
     
     def predict(self, x):
         probabilities = self.predict_probability(x)
-        predictions = (probabilities >= self.threshold).astype(int)
-        return predictions
+        if not self.is_multiclass:
+            predictions = (probabilities >= self.threshold).astype(int)
+            return predictions
+        else:
+            # note: argmax adalah fungsi buat cari param yg hasilin nilai max
+            # a.k.a argument of the maxima
+            class_indices = np.argmax(probabilities, axis=1) 
+            return self.classes_[class_indices]
+            
     
     def generate_training_gif(self, X, y, subsample_rate = 10, output_path='training_animation.gif', 
                              fps=10, sample_points=50):
