@@ -60,37 +60,24 @@ class BinarySVM:
         return f_xi - self.y[i]
     
     def select_second_alpha(self, i1):
-        # pilih alpha yang memaksimalkan |E_i1 - E_i2| untuk konvergensi lebih cepat
-
         E1 = self.errors[i1]
         
-        # cari i2 yang memaksimalkan |E1-E2|
         valid_alphas = np.where((self.alphas > self.tol) & (self.alphas < self.C - self.tol))[0]
+        valid_alphas = valid_alphas[valid_alphas != i1]
 
-        if len(valid_alphas) > 1:
-            max_diff = 0
-            i2 = -1
-            for i in valid_alphas:
-                if i == i1:
-                    continue
-                E2 = self.errors[i]
-                diff = abs(E1-E2)
-                if diff > max_diff:
-                    max_diff = diffi2 = i
-            if i2 >= 0:
-                return i2
+        if len(valid_alphas) > 0:
+            diffs = np.abs(E1 - self.errors[valid_alphas])
+            best_idx = np.argmax(diffs)
+            return valid_alphas[best_idx]
             
-        # jika tidak ada atau cuma ada 1, pilih random
-        non_i1 = list(range(len(self.y)))
-        non_i1.remove(i1)
-        return np.random.choice(non_i1)
+        all_indices = np.arange(len(self.y))
+        all_indices = all_indices[all_indices != i1]
+        
+        idx = np.random.randint(len(all_indices))
+        return all_indices[idx]
     
     # implementasi SMO
     def take_step(self, i1, i2):
-        # constraint: sum y_i * alpha_i = 0
-        # alpha: y1*alpha1 + y2*alpha2 = constant
-        
-        # 1 jika berhasil update, 0 jika tidak
         if i1 == i2:
             return 0
         
@@ -101,6 +88,7 @@ class BinarySVM:
         E1 = self.errors[i1]
         E2 = self.errors[i2]
 
+        # Compute L and H
         if y1 != y2:
             L = max(0, alpha2_old - alpha1_old)
             H = min(self.C, self.C + alpha2_old - alpha1_old)
@@ -111,28 +99,33 @@ class BinarySVM:
         if abs(L - H) < 1e-10:
             return 0
         
-        #  hitung eta
+        # Hitung eta
         k11 = self.K[i1, i1]
         k12 = self.K[i1, i2]
         k22 = self.K[i2, i2]
         eta = 2 * k12 - k11 - k22
+        
         if eta >= 0:
             return 0
         
-        # hitung alpha2 new
+        # Update alpha2
         alpha2_new = alpha2_old - (y2 * (E1 - E2)) / eta
         if alpha2_new > H:
             alpha2_new = H
         elif alpha2_new < L:
             alpha2_new = L
+            
         if abs(alpha2_new - alpha2_old) < 1e-5:
             return 0
         
-        #  hitung alpha 1 new
+        # Update alpha1
         alpha1_new = alpha1_old + y1 * y2 * (alpha2_old - alpha2_new)
+        
+        # Update bias (b)
         b1 = self.b - E1 - y1 * (alpha1_new - alpha1_old) * k11 - y2 * (alpha2_new - alpha2_old) * k12
-          
         b2 = self.b - E2 - y1 * (alpha1_new - alpha1_old) * k12 - y2 * (alpha2_new - alpha2_old) * k22
+        
+        b_old = self.b # Simpan b lama untuk update error cache
         if 0 < alpha1_new < self.C:
             self.b = b1
         elif 0 < alpha2_new < self.C:
@@ -140,18 +133,22 @@ class BinarySVM:
         else:
             self.b = (b1 + b2) / 2
 
-        # update alphas
+        # Simpan alpha baru
         self.alphas[i1] = alpha1_new
         self.alphas[i2] = alpha2_new
 
-        # Hanya update error untuk non-bound alphas
-        for i in range(len(self.y)):
-            if 0 < self.alphas[i] < self.C:
-                self.errors[i] = self.compute_error(i)
-
-        self.errors[i1] = 0 
-        self.errors[i2] = 0
+        delta_alpha1 = alpha1_new - alpha1_old
+        delta_alpha2 = alpha2_new - alpha2_old
+        delta_b = self.b - b_old
         
+        # Error baru = Error lama + perubahan kontribusi support vector + perubahan bias
+        self.errors += y1 * delta_alpha1 * self.K[i1, :] + y2 * delta_alpha2 * self.K[i2, :] + delta_b
+
+        if 0 < alpha1_new < self.C:
+            self.errors[i1] = 0
+        if 0 < alpha2_new < self.C:
+            self.errors[i2] = 0
+            
         return 1
 
 
