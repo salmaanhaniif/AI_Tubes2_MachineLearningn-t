@@ -83,7 +83,7 @@ class LogisticRegression:
             print(f"Gagal menyimpan model: {e}")
 
     @staticmethod
-    def load_model(filename):
+    def load_model(self, filename):
         try:
             with open(filename, 'rb') as file:  
                 loaded_model = pickle.load(file)

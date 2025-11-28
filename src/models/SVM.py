@@ -309,7 +309,7 @@ class MulticlassSVM:
         print(f"Model berhasil disimpan ke {filename}")
 
     @staticmethod
-    def load_model(filename):
+    def load_model(self, filename):
         with open(filename, 'rb') as f:
             model = pickle.load(f)
         print(f"Model berhasil dimuat dari {filename}")
