@@ -22,36 +22,19 @@ class DecisionTreeLearning:
         self.max_depth = max_depth
         self.feature_types = feature_types 
         self.root = None
-        
+
     def _entropy(self, y):
         _, counts = np.unique(y, return_counts=True)
         p = counts / len(y)
         return -np.sum(p * np.log2(p))
-        
-    def _information_gain(self, parent_y, children_y):
-        parent_entropy = self._entropy(parent_y)
-        children_entropy = 0
-        total_len = len(parent_y)
-        
-        for child in children_y:
-            if len(child) > 0:
-                children_entropy += (len(child) / total_len) * self._entropy(child)
-        return parent_entropy - children_entropy
 
-    def _split_information(self, children_y_list):
-        total = sum(len(child) for child in children_y_list)
-        split_info = 0
-        for child in children_y_list:
-            if len(child) > 0:
-                p = len(child) / total
-                split_info += p * np.log2(p) 
-        return -split_info
-            
-    def _gain_ratio(self, parent_y, children_y_list):
-        split_info = self._split_information(children_y_list)
-        info_gain = self._information_gain(parent_y, children_y_list)
-        
-        return info_gain / split_info if split_info != 0 else 0
+    def _entropy_from_counts(self, counts, total):
+        entropy = 0
+        for count in counts.values():
+            if count > 0:
+                p = count / total
+                entropy -= p * np.log2(p)
+        return entropy
 
     def _is_missing(self, value):
         if value is None: return True
@@ -64,11 +47,9 @@ class DecisionTreeLearning:
     def _determine_feature_types(self, X):
         feature_types = []
         n_features = X.shape[1]
-        
         for i in range(n_features):
             col_values = X[:, i]
             valid_vals = [v for v in col_values if not self._is_missing(v)]
-                
             is_numerical = True
             for val in valid_vals:
                 if isinstance(val, str) or isinstance(val, bool):
@@ -78,84 +59,112 @@ class DecisionTreeLearning:
         return feature_types
 
     def _find_best_numerical_split(self, X, y, feature_idx):
-        feature_values = X[:, feature_idx] 
+        feature_values = X[:, feature_idx]
+        valid_mask = ~pd.isna(feature_values) if hasattr(feature_values, 'isna') else np.array([not self._is_missing(v) for v in feature_values])
         
-        non_missing_indices = [i for i, v in enumerate(feature_values) if not self._is_missing(v)]
+        X_col = feature_values[valid_mask]
+        y_col = y[valid_mask]
         
-        if len(non_missing_indices) < 2:
+        if len(X_col) < 2:
             return None, -1
 
-        non_missing_vals = [float(feature_values[i]) for i in non_missing_indices]
-        non_missing_y = [y[i] for i in non_missing_indices]
-        
-        unique_values = sorted(set(non_missing_vals))
-        
-        if len(unique_values) <= 1:
+        try:
+            X_col = X_col.astype(float)
+        except:
             return None, -1
+
+        sorted_indices = np.argsort(X_col)
+        X_sorted = X_col[sorted_indices]
+        y_sorted = y_col[sorted_indices]
         
-        thresholds = [(unique_values[i] + unique_values[i+1]) / 2 for i in range(len(unique_values) - 1)]
+        n_samples = len(y_sorted)
+        right_counts = Counter(y_sorted)
+        left_counts = Counter()
         
-        best_threshold = None
+        parent_entropy = self._entropy_from_counts(right_counts, n_samples)
+        
         best_gain_ratio = -1
+        best_threshold = None
         
-        # numpy array untuk optimasi
-        nm_vals_np = np.array(non_missing_vals)
-        nm_y_np = np.array(non_missing_y)
-
-        for t in thresholds:
-            left_mask = nm_vals_np <= t
-            right_mask = ~left_mask
+        left_n = 0
+        right_n = n_samples
+        
+        for i in range(1, n_samples):
+            c = y_sorted[i-1]
+            left_counts[c] += 1
+            right_counts[c] -= 1
+            if right_counts[c] == 0:
+                del right_counts[c]
             
-            left_y = nm_y_np[left_mask]
-            right_y = nm_y_np[right_mask]
+            left_n += 1
+            right_n -= 1
             
-            if len(left_y) == 0 or len(right_y) == 0:
+            if X_sorted[i] == X_sorted[i-1]:
                 continue
-
-            current_gain = self._gain_ratio(non_missing_y, [left_y, right_y])
+                
+            left_entropy = self._entropy_from_counts(left_counts, left_n)
+            right_entropy = self._entropy_from_counts(right_counts, right_n)
             
-            if current_gain > best_gain_ratio:
-                best_gain_ratio = current_gain
-                best_threshold = t
-        
+            child_entropy = (left_n / n_samples) * left_entropy + (right_n / n_samples) * right_entropy
+            info_gain = parent_entropy - child_entropy
+            
+            p_left = left_n / n_samples
+            p_right = right_n / n_samples
+            split_info = -(p_left * np.log2(p_left) + p_right * np.log2(p_right))
+            
+            if split_info == 0:
+                gain_ratio = 0
+            else:
+                gain_ratio = info_gain / split_info
+            
+            if gain_ratio > best_gain_ratio:
+                best_gain_ratio = gain_ratio
+                best_threshold = (X_sorted[i] + X_sorted[i-1]) / 2
+                
         return best_threshold, best_gain_ratio
-            
+
     def _find_best_nominal_split(self, X, y, feature_idx):
-        feature_values = X[:, feature_idx] if isinstance(X, np.ndarray) else [row[feature_idx] for row in X]
-        
+        feature_values = X[:, feature_idx]
         non_missing_indices = [i for i, v in enumerate(feature_values) if not self._is_missing(v)]
         
         if not non_missing_indices:
             return None, -1
             
-        non_missing_vals = [feature_values[i] for i in non_missing_indices]
-        non_missing_y = [y[i] for i in non_missing_indices]
+        non_missing_vals = np.array([feature_values[i] for i in non_missing_indices])
+        non_missing_y = np.array([y[i] for i in non_missing_indices])
         
-        unique_categories = list(set(non_missing_vals))
+        unique_categories = np.unique(non_missing_vals)
         if len(unique_categories) <= 1:
             return None, -1
         
         children_y_list = []
-        nm_vals_np = np.array(non_missing_vals)
-        nm_y_np = np.array(non_missing_y)
-        
         for category in unique_categories:
-            mask = nm_vals_np == category
-            children_y_list.append(nm_y_np[mask])
+            children_y_list.append(non_missing_y[non_missing_vals == category])
         
-        gain_ratio = self._gain_ratio(non_missing_y, children_y_list)
-        return unique_categories, gain_ratio            
-    
+        parent_entropy = self._entropy(non_missing_y)
+        children_entropy = 0
+        split_info = 0
+        total_len = len(non_missing_y)
+        
+        for child in children_y_list:
+            if len(child) > 0:
+                p = len(child) / total_len
+                children_entropy += p * self._entropy(child)
+                split_info -= p * np.log2(p)
+                
+        info_gain = parent_entropy - children_entropy
+        gain_ratio = info_gain / split_info if split_info != 0 else 0
+        
+        return list(unique_categories), gain_ratio
+
     def _find_best_split(self, X, y):
         max_gain_ratio = -1
         best_feature_idx = None
         best_split_info = None 
-        
         n_features = X.shape[1]
         
         for idx in range(n_features):
             feature_type = self.feature_types[idx] if self.feature_types else 'numerical'
-            
             if feature_type == 'nominal':
                 split_info, gain_ratio = self._find_best_nominal_split(X, y, idx)
             else:
@@ -169,18 +178,19 @@ class DecisionTreeLearning:
         return best_feature_idx, best_split_info, max_gain_ratio
         
     def _create_leaf(self, y):
+        if len(y) == 0:
+            return Node(value=None)
         counter_y = Counter(y)
         majority_class = counter_y.most_common(1)[0][0]
         return Node(value=majority_class)
 
     def _build_tree(self, X, y, depth=0):
         n_samples, n_features = X.shape
-        n_labels = len(np.unique(y))
+        unique_y = np.unique(y)
+        n_labels = len(unique_y)
 
-        if (depth >= self.max_depth) or (n_samples < self.min_samples_split):
+        if (depth >= self.max_depth) or (n_samples < self.min_samples_split) or (n_labels == 1):
             return self._create_leaf(y)
-        if n_labels == 1:
-            return Node(value=y[0])
             
         best_feature, split_info, gain_ratio = self._find_best_split(X, y)
         
@@ -198,16 +208,21 @@ class DecisionTreeLearning:
             
             left_indices = []
             right_indices = []
+            missing_indices = []
             
             for i, v in enumerate(col_vals):
                 if self._is_missing(v):
+                    missing_indices.append(i)
                     continue
-                if float(v) <= node.threshold:
-                    left_indices.append(i)
-                else:
-                    right_indices.append(i)
-            
-            missing_indices = [i for i, v in enumerate(col_vals) if self._is_missing(v)]
+                try:
+                    val_float = float(v)
+                    if val_float <= node.threshold:
+                        left_indices.append(i)
+                    else:
+                        right_indices.append(i)
+                except ValueError:
+                    missing_indices.append(i)
+
             if len(left_indices) >= len(right_indices):
                 left_indices.extend(missing_indices)
             else:
@@ -219,7 +234,7 @@ class DecisionTreeLearning:
             node.children['left'] = self._build_tree(X[left_indices], y[left_indices], depth+1)
             node.children['right'] = self._build_tree(X[right_indices], y[right_indices], depth+1)
             
-        else: # nominal
+        else:
             node.categories = split_info
             node.is_nominal = True
             
@@ -231,12 +246,18 @@ class DecisionTreeLearning:
                     missing_indices.append(i)
                 elif v in idx_map:
                     idx_map[v].append(i)
-                    
+            
+            majority_class = self._create_leaf(y).value
+            
             counter_y = Counter(y)
-            majority_class = counter_y.most_common(1)[0][0]
-            
-            idx_map[majority_class].extend(missing_indices)
-            
+            if counter_y:
+                 majority_global = counter_y.most_common(1)[0][0]
+                 if majority_global in idx_map:
+                     idx_map[majority_global].extend(missing_indices)
+                 else:
+                     first_cat = list(node.categories)[0]
+                     idx_map[first_cat].extend(missing_indices)
+
             for category in node.categories:
                 indices = idx_map[category]
                 if not indices:
@@ -259,20 +280,29 @@ class DecisionTreeLearning:
         val = sample[node.feature]
         
         if self._is_missing(val):
+            if not node.children:
+                 return None
             first_child = list(node.children.values())[0]
             return self._traverse_tree(sample, first_child)
 
         if node.is_nominal:
             if val in node.children:
                 return self._traverse_tree(sample, node.children[val])
-            return self._traverse_tree(sample, list(node.children.values())[0])
+            if node.children:
+                return self._traverse_tree(sample, list(node.children.values())[0])
+            return None
         else:
-            if val <= node.threshold:
+            try:
+                val_float = float(val)
+                if val_float <= node.threshold:
+                    return self._traverse_tree(sample, node.children['left'])
+                else:
+                    return self._traverse_tree(sample, node.children['right'])
+            except:
                 return self._traverse_tree(sample, node.children['left'])
-            else:
-                return self._traverse_tree(sample, node.children['right'])
 
     def predict(self, X):
+        X = np.array(X, dtype=object)
         return np.array([self._traverse_tree(sample, self.root) for sample in X])
     
 # --- Testing Code ---
