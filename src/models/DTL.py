@@ -3,6 +3,8 @@ from collections import Counter
 import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
+import json
+import pickle
 
 class Node:
     def __init__(self, feature=None, threshold=None, categories=None, is_nominal=False, children=None, value=None):
@@ -305,10 +307,28 @@ class DecisionTreeLearning:
         X = np.array(X, dtype=object)
         return np.array([self._traverse_tree(sample, self.root) for sample in X])
     
+    def save_model(self, filename):
+        try:
+            with open(filename, 'wb') as file: 
+                pickle.dump(self, file)
+            print(f"Model berhasil disimpan ke: {filename}")
+        except Exception as e:
+            print(f"Gagal menyimpan model: {e}")
+
+    def load_model(self, filename):
+        try:
+            with open(filename, 'rb') as file:  
+                loaded_model = pickle.load(file)
+            print(f"Model berhasil dimuat dari: {filename}")
+            return loaded_model
+        except Exception as e:
+            print(f"Gagal memuat model: {e}")
+            return None
+        
 # --- Testing Code ---
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    csv_path = os.path.join(base_dir, 'src/SeoulBikeData.csv')
+    csv_path = os.path.join(base_dir, 'src/dataset/test.csv')
     
     try:
         df = pd.read_csv(csv_path, encoding='utf-8')
@@ -336,20 +356,30 @@ if __name__ == "__main__":
     
     clf = DecisionTreeLearning(min_samples_split=2, max_depth=10)
     clf.fit(X_train, y_train)
+
+    clf.save_model('pohon.txt')
     
-    y_train_pred = clf.predict(X_train)
-    train_accuracy = np.mean(y_train_pred == np.array(y_train))
-    print(f"Training Accuracy: {train_accuracy:.4f}")
+    # y_train_pred = clf.predict(X_train)
+    # train_accuracy = np.mean(y_train_pred == np.array(y_train))
+    # print(f"Training Accuracy: {train_accuracy:.4f}")
     
     y_test_pred = clf.predict(X_test)
     test_accuracy = np.mean(y_test_pred == np.array(y_test))
     print(f"Testing Accuracy: {test_accuracy:.4f}")
     
-    print(f"\nSample prediksi 5 data test pertama:")
-    for i in range(min(5, len(X_test))):
-        print(f"Data: {X_test[i]}")
-        print(f"Prediksi: {y_test_pred[i]}, Actual: {y_test[i]}\n")
+    # print(f"\nSample prediksi 5 data test pertama:")
+    # for i in range(min(5, len(X_test))):
+    #     print(f"Data: {X_test[i]}")
+    #     print(f"Prediksi: {y_test_pred[i]}, Actual: {y_test[i]}\n")
         
+    load_clf = DecisionTreeLearning()
+
+    load_clf.load_model('pohon.txt')
+
+    y_test_pred = clf.predict(X_test)
+    test_accuracy = np.mean(y_test_pred == np.array(y_test))
+    print(f"Testing Accuracy Model hasil Save&Load: {test_accuracy:.4f}")
+
     # Contoh Data (Campuran Numerik dan Nominal)
     # [Cuaca, Suhu, Kelembaban, Angin]
     # X = [
