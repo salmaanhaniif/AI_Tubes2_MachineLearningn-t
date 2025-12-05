@@ -44,7 +44,7 @@ class BinarySVM:
                 x2 = x2.reshape(1, -1)
 
             xx = np.sum(x1**2, axis=1).reshape(-1, 1)
-            yy = np.sum(x2**2, axis=1).reshape(-1, 1)
+            yy = np.sum(x2**2, axis=1).reshape(1, -1)
             xy = np.dot(x1, x2.T)
             sq_dist = xx + yy - 2*xy
             return np.exp(-gamma * sq_dist)
@@ -229,7 +229,7 @@ class BinarySVM:
                 self.support_vectors, 
                 axis=0
             )
-            print(f"Weight vector w: {self.w}")
+            # print(f"Weight vector w: {self.w}")
         else:
             self.w = None  
 
