@@ -5,15 +5,17 @@ import os
 from sklearn.model_selection import train_test_split
 import json
 import pickle
+import matplotlib.pyplot as plt
 
 class Node:
-    def __init__(self, feature=None, threshold=None, categories=None, is_nominal=False, children=None, value=None):
+    def __init__(self, feature=None, threshold=None, categories=None, is_nominal=False, children=None, value=None, fallback_value=None):
         self.feature = feature
         self.threshold = threshold
         self.categories = categories
         self.is_nominal = is_nominal
         self.children = children if children is not None else {}
         self.value = value
+        self.fallback_value = fallback_value
     
     def is_leaf_node(self):
         return self.value is not None
@@ -191,15 +193,20 @@ class DecisionTreeLearning:
         unique_y = np.unique(y)
         n_labels = len(unique_y)
 
+        majority_val = None
+        if len(y) > 0:
+            counter_y = Counter(y)
+            majority_val = counter_y.most_common(1)[0][0]
+
         if (depth >= self.max_depth) or (n_samples < self.min_samples_split) or (n_labels == 1):
-            return self._create_leaf(y)
+            return Node(value=majority_val, fallback_value=majority_val)
             
         best_feature, split_info, gain_ratio = self._find_best_split(X, y)
         
         if best_feature is None or gain_ratio <= 0:
-            return self._create_leaf(y)
+            return Node(value=majority_val, fallback_value=majority_val)
         
-        node = Node(feature=best_feature)
+        node = Node(feature=best_feature, fallback_value=majority_val)
         f_type = self.feature_types[best_feature] if self.feature_types else 'numerical'
         
         if f_type == 'numerical':
@@ -207,7 +214,6 @@ class DecisionTreeLearning:
             node.is_nominal = False
             
             col_vals = X[:, best_feature]
-            
             left_indices = []
             right_indices = []
             missing_indices = []
@@ -231,7 +237,7 @@ class DecisionTreeLearning:
                 right_indices.extend(missing_indices)
                 
             if not left_indices or not right_indices:
-                return self._create_leaf(y)
+                return Node(value=majority_val, fallback_value=majority_val)
                 
             node.children['left'] = self._build_tree(X[left_indices], y[left_indices], depth+1)
             node.children['right'] = self._build_tree(X[right_indices], y[right_indices], depth+1)
@@ -249,8 +255,6 @@ class DecisionTreeLearning:
                 elif v in idx_map:
                     idx_map[v].append(i)
             
-            majority_class = self._create_leaf(y).value
-            
             counter_y = Counter(y)
             if counter_y:
                  majority_global = counter_y.most_common(1)[0][0]
@@ -263,9 +267,10 @@ class DecisionTreeLearning:
             for category in node.categories:
                 indices = idx_map[category]
                 if not indices:
-                    node.children[category] = self._create_leaf(y)
+                    node.children[category] = Node(value=majority_val, fallback_value=majority_val)
                 else:
                     node.children[category] = self._build_tree(X[indices], y[indices], depth+1)
+        
         return node
         
     def fit(self, X, y):
@@ -306,7 +311,48 @@ class DecisionTreeLearning:
     def predict(self, X):
         X = np.array(X, dtype=object)
         return np.array([self._traverse_tree(sample, self.root) for sample in X])
-    
+        
+    def score(self, X, y):
+        predictions = self.predict(X)
+        return np.mean(predictions == y)
+
+    def post_prune(self, X_val, y_val):
+        X_val = np.array(X_val, dtype=object)
+        y_val = np.array(y_val)
+        
+        initial_score = self.score(X_val, y_val)
+        print(f"Akurasi Validasi Sebelum Pruning: {initial_score:.4f}")
+        self.export_tree_matplotlib("tree_before_prune.png")
+        
+        self._prune_step(self.root, X_val, y_val)
+        
+        final_score = self.score(X_val, y_val)
+        print(f"Akurasi Validasi Setelah Pruning: {final_score:.4f}")
+        self.export_tree_matplotlib("tree_after_prune.png")
+
+    def _prune_step(self, node, X_val, y_val):
+
+        if not node.is_leaf_node():
+            for child in node.children.values():
+                self._prune_step(child, X_val, y_val)
+        
+        if not node.is_leaf_node():
+            current_score = self.score(X_val, y_val)
+            
+            original_children = node.children
+            original_value = node.value
+            
+            node.children = {} 
+            node.value = node.fallback_value
+            
+            pruned_score = self.score(X_val, y_val)
+
+            if pruned_score >= current_score:
+                pass 
+            else:
+                node.children = original_children
+                node.value = original_value
+        
     def save_model(self, filename):
         try:
             with open(filename, 'wb') as file: 
@@ -324,7 +370,109 @@ class DecisionTreeLearning:
         except Exception as e:
             print(f"Gagal memuat model: {e}")
             return None
+    
+    def export_tree_matplotlib(self, filename="tree.png", feature_names=None):
+
+        try:
+            import matplotlib.pyplot as plt
+            from matplotlib.patches import FancyBboxPatch
+        except ImportError:
+            print("Error: Matplotlib belum ter-Install")
+            return
+
+        style_config = {
+            'leaf_color': "#4DB169",
+            'node_color': '#90EE90',
+            'text_size': 9,
+            'line_width': 1.5,
+            'box_style': "round,pad=0.4,rounding_size=0.2"
+        }
+
+        coords = {} 
+        leaf_counter = 0
+
+        def calc_coords(node, depth=0):
+            nonlocal leaf_counter
+            
+            if node.is_leaf_node():
+                coords[id(node)] = (leaf_counter, depth)
+                leaf_counter += 1
+                return (leaf_counter - 1)
+            
+            child_x_positions = []
+            for child in node.children.values():
+                child_x_positions.append(calc_coords(child, depth + 1))
+            
+            current_x = sum(child_x_positions) / len(child_x_positions)
+            coords[id(node)] = (current_x, depth)
+            return current_x
+
+        if self.root:
+            calc_coords(self.root)
         
+        depths = [pos[1] for pos in coords.values()]
+        max_depth = max(depths) if depths else 0
+        width_span = leaf_counter
+        
+        fig, ax = plt.subplots(figsize=(max(width_span * 1.2, 8), max(max_depth * 1.5, 6)))
+        ax.set_axis_off()
+        
+        ax.set_ylim(max_depth + 0.5, -0.5)
+        ax.set_xlim(-0.5, width_span - 0.5)
+
+        def draw_node(node, x, y):
+            if node.is_leaf_node():
+                text = f"Class:\n{node.value}"
+                facecolor = style_config['leaf_color']
+            else:
+                fname = f"Feat {node.feature}"
+                if feature_names and node.feature < len(feature_names):
+                    fname = feature_names[node.feature]
+                
+                if node.is_nominal:
+                    text = f"{fname} ?"
+                else:
+                    text = f"{fname}\n<= {node.threshold:.2f}"
+                facecolor = style_config['node_color']
+
+            ax.annotate(text, xy=(x, y), xycoords='data',
+                        ha='center', va='center',
+                        bbox=dict(boxstyle=style_config['box_style'], 
+                                  facecolor=facecolor, 
+                                  edgecolor='#555555', 
+                                  linewidth=1.5),
+                        fontsize=style_config['text_size'], zorder=10)
+
+            if not node.is_leaf_node():
+                for key, child in node.children.items():
+                    cx, cy = coords[id(child)]
+                    
+                    if key == 'left': edge_label = "T"
+                    elif key == 'right': edge_label = "F"
+                    else: edge_label = str(key)
+
+                    ax.plot([x, cx], [y, cy], color='#555555', linewidth=style_config['line_width'], zorder=1)
+
+                    mid_x = (x + cx) / 2
+                    mid_y = (y + cy) / 2
+                    ax.text(mid_x, mid_y, edge_label, ha='center', va='center', fontsize=8,
+                            color='black', weight='bold',
+                            bbox=dict(boxstyle='square,pad=0.1', fc='white', ec='none', alpha=0.8))
+
+                    draw_node(child, cx, cy)
+
+        if self.root:
+            rx, ry = coords[id(self.root)]
+            draw_node(self.root, rx, ry)
+            
+        try:
+            plt.tight_layout()
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
+            print(f"Gambar tree (High Quality) disimpan: {filename}")
+            plt.close()
+        except Exception as e:
+            print(f"Gagal menyimpan: {e}")
+
 # --- Testing Code ---
 if __name__ == "__main__":
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -358,7 +506,8 @@ if __name__ == "__main__":
     clf.fit(X_train, y_train)
 
     clf.save_model('pohon.txt')
-    
+
+    clf.export_tree_matplotlib()
     # y_train_pred = clf.predict(X_train)
     # train_accuracy = np.mean(y_train_pred == np.array(y_train))
     # print(f"Training Accuracy: {train_accuracy:.4f}")
@@ -367,6 +516,7 @@ if __name__ == "__main__":
     test_accuracy = np.mean(y_test_pred == np.array(y_test))
     print(f"Testing Accuracy: {test_accuracy:.4f}")
     
+    clf.post_prune(X_val=X_test, y_val=y_test)
     # print(f"\nSample prediksi 5 data test pertama:")
     # for i in range(min(5, len(X_test))):
     #     print(f"Data: {X_test[i]}")
@@ -374,7 +524,7 @@ if __name__ == "__main__":
         
     load_clf = DecisionTreeLearning()
 
-    load_clf.load_model('pohon.txt')
+    load_clf.load_model('saved_models/pohon.txt')
 
     y_test_pred = clf.predict(X_test)
     test_accuracy = np.mean(y_test_pred == np.array(y_test))
