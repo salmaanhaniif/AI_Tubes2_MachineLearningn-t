@@ -1,5 +1,7 @@
 import pickle
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
 
 class BinarySVM:
     # implementasi menggunakan optimasi kuadratik
@@ -24,6 +26,7 @@ class BinarySVM:
         # chace error
         self.errors = None
         self.K = None
+        self.history = []
 
     def kernel(self, x1, x2):
         # menghitung kernel matrix
@@ -182,6 +185,8 @@ class BinarySVM:
         examine_all = True 
         iteration = 0
         
+        self.history = []
+        
         while (num_changed > 0 or examine_all) and iteration < self.max_iter:
             num_changed = 0
             
@@ -195,6 +200,12 @@ class BinarySVM:
                 non_bound_idx = np.where((self.alphas > self.tol) & (self.alphas < self.C - self.tol))[0]
                 for i in non_bound_idx:
                     num_changed += self.examine_example(i)
+            
+            self.history.append({
+                'alphas': self.alphas.copy(),
+                'b': self.b,
+                'iteration': iteration
+            })
             
             iteration += 1
             
@@ -251,6 +262,54 @@ class BinarySVM:
 
         scores = self.predict_score(X)
         return np.sign(scores)
+    
+    def generate_training_gif(self, X, y, output_path='svm_training.gif', fps=5, grid_size=50):
+        # fungsi untuk membuat animasi pergerakan Hyperplane & Margin (Syarat: Input X harus 2 Dimensi/hanya 2 kolom fitur)
+        
+        # Validasi dimensi data
+        if X.shape[1] != 2:
+            print("Error: Visualisasi hanya bisa untuk data 2 Dimensi (2 Fitur).")
+            return
+
+        print(f"Membuat animasi dari {len(self.history)} frame...")
+        
+        x_min, x_max = X[:, 0].min() - 1, X[:, 0].max() + 1
+        y_min, y_max = X[:, 1].min() - 1, X[:, 1].max() + 1
+        
+        xx, yy = np.meshgrid(np.linspace(x_min, x_max, grid_size), np.linspace(y_min, y_max, grid_size))
+        
+        # Gabungkan xx dan yy jadi satu array titik koorinat
+        grid_points = np.c_[xx.ravel(), yy.ravel()]
+        K_grid = self.kernel(self.X_train, grid_points) 
+        
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        def update(frame_idx):
+            ax.clear()
+            snapshot = self.history[frame_idx]
+            alphas_now = snapshot['alphas']
+            b_now = snapshot['b']
+            iter_now = snapshot['iteration']
+            
+            ax.scatter(X[:, 0], X[:, 1], c=y, cmap='coolwarm', s=50, edgecolors='k')
+            
+            # Hyperplane f(x) = sum(alpha_i * y_i * K(x_i, x)) + b
+            decision_values = (alphas_now * self.y) @ K_grid + b_now
+            decision_values = decision_values.reshape(xx.shape)
+            
+            # Level 0 = Hyperplane (Garis Pemisah), Level -1 & 1 = Margin (Batas Jalan)
+            ax.contour(xx, yy, decision_values, levels=[-1, 0, 1], linestyles=['--', '-', '--'], colors=['blue', 'black', 'red'], linewidths=[1, 2, 1])
+            ax.set_title(f"SVM Training Process - Iteration: {iter_now}")
+            ax.set_xlabel("Feature 1")
+            ax.set_ylabel("Feature 2")
+
+        anim = FuncAnimation(fig, update, frames=len(self.history), interval=200)
+        try:
+            writer = PillowWriter(fps=fps)
+            anim.save(output_path, writer=writer)
+            print(f"Sukses! Video tersimpan di: {output_path}")
+        except Exception as e:
+            print(f"Gagal menyimpan GIF: {e}. Pastikan 'pillow' terinstall.")
     
 class MulticlassSVM:
     # implementasi One v All (OvA) menggunakan BinarySVM
