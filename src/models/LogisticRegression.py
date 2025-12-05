@@ -10,6 +10,7 @@ NOTE: JANLUP HAPUS TES.IPYNB AND TITANIC_CLEAN.CSV KALAU UDH BISA PAKE DATASET Y
 
 Why pake numba:
 - in this type of algo, using numba jit just make sense, unless pake mini batch yg udh full vectorized (which im considering to make dan opsional)
+- biar keep the stochastic sense of the algo makanya gk vectorized
 - gue nyoba pake dataset titanic yg cleaned which i found online, sebenernya dari segi akurasi, yg ori tuh udah kelasss abis bahkan sama
   kayak yg punya scikit. Tapi, dari segi waktu, yang punya scikit cuma 0-0.1 sec meanwhile yg punya kita 5.5-6.5 sec. After pake numba jit + vector mult 
   dr numpy (yg @) (jujur gk tau yg ini sengaruh apa) jadi drop jadi 1-1.5 sec doang tanpa ada perubahan dari segi akurasi.
@@ -72,9 +73,7 @@ class LogisticRegression:
         # Untuk tracking training history (bonus video)
         self.training_history = []
 
-    # fitur save dan load dengan pickle
     def save_model(self, filename):
-        # seluruh objek disimpan
         try:
             with open(filename, 'wb') as file: 
                 pickle.dump(self, file)
@@ -131,7 +130,7 @@ class LogisticRegression:
             self._fit_binary(x, y_binary, track_history)
     
     
-    def _fit_ovr(self, x, y, track_history=False):
+    def _fit_ovr(self, x, y, track_history=True):
         """
         Train multiclass model dengan One-vs-Rest strategy
         """
@@ -154,15 +153,15 @@ class LogisticRegression:
             # Simpan classifier
             self.binary_classifiers[class_label] = binary_clf
     
-    def _fit_binary(self, x, y, track_history=False):
+    def _fit_binary(self, x, y, track_history=True):
         """Train single binary classifier"""
         if self.mini_batch:
-            self._fit_mbgd(x, y, track_history)
+            self._fit_mbga(x, y, track_history)
         else:
-            self._fit_sgd(x, y, track_history)
+            self._fit_sga(x, y, track_history)
     
-    def _fit_sgd(self, x, y, track_history=False):
-        """melatih model dengan stochastic gradient descent"""
+    def _fit_sga(self, x, y, track_history=True):
+        """melatih model dengan stochastic gradient ascent"""
         n_samples = x.shape[0]
 
         # bias diinisiasi 1
@@ -171,7 +170,6 @@ class LogisticRegression:
 
         self.weights = np.zeros(n_total_features)
         
-        # Clear history
         if track_history:
             self.training_history = []
         
@@ -187,7 +185,7 @@ class LogisticRegression:
                 self.learning_rate, n_samples
             )
             
-            # Track weights dan loss
+            # track weights dan loss
             if track_history:
                 loss = self._compute_loss(x, y)
                 self.training_history.append({
@@ -196,50 +194,49 @@ class LogisticRegression:
                     'loss': loss
                 })
     
-    def _fit_mbgd(self, x, y, track_history=False):
-        """melatih model dengan mini batch gradient descent"""
+    def _fit_mbga(self, x, y, track_history=True):
+        """melatih model dengan mini batch stochastic gradient ascent"""
         n_samples, n_features = x.shape
         
-        # Bias diinisiasi 1
+        # bias diinisiasi 1
         x_biased = np.hstack((np.ones((n_samples, 1)), x))
         n_total_features = x_biased.shape[1]
         
-        # Initialize weights
+        # initialize weights
         self.weights = np.zeros(n_total_features)
         
-        # Clear history
         if track_history:
             self.training_history = []
         
-        # Hitung jumlah batch
+        # hitung jumlah batch
         n_batches = n_samples // self.batch_size
         
         for epoch in range(self.n_iteration):
-            # Shuffle sekali di awal epoch
+            # shuffle sekali di awal epoch
             indices = np.random.permutation(n_samples)
             x_shuffled = x_biased[indices]
             y_shuffled = y[indices]
             
-            # Proses per mini-batch
+            # proses per mini-batch
             for batch_idx in range(n_batches):
                 start_idx = batch_idx * self.batch_size
                 end_idx = start_idx + self.batch_size
                 
-                # Ambil batch
+                # ambil batch
                 x_batch = x_shuffled[start_idx:end_idx]
                 y_batch = y_shuffled[start_idx:end_idx]
                 
-                # Vectorized z calc
+                # vectorized z calc
                 z = x_batch @ self.weights 
                 p = self.sigmoid(z)  # Batch predictions
                 
-                # Vectorized gradient jadi seluruh batch sekaligus
+                # vectorized gradient jadi seluruh batch sekaligus
                 gradient = x_batch.T @ (y_batch - p) / self.batch_size
                 
-                # Update weights
+                # update weights
                 self.weights += self.learning_rate * gradient
             
-            # Handle sisa yang gk masuk batch
+            # handle sisa yang gk masuk batch
             if n_samples % self.batch_size != 0:
                 x_batch = x_shuffled[n_batches * self.batch_size:]
                 y_batch = y_shuffled[n_batches * self.batch_size:]
@@ -249,7 +246,7 @@ class LogisticRegression:
                 gradient = x_batch.T @ (y_batch - p) / len(x_batch)
                 self.weights += self.learning_rate * gradient
             
-            # Track weights dan loss
+            # track weights dan loss
             if track_history:
                 loss = self._compute_loss(x, y)
                 self.training_history.append({
